@@ -169,7 +169,8 @@ bool CBlockTreeDB::WriteTxIndex(const std::vector<std::pair<uint256, CDiskTxPos>
 }
 
 bool CBlockTreeDB::ReadAddrIndex(uint160 addrid, std::vector<CExtDiskTxPos> &list) {
-    boost::scoped_ptr<leveldb::Iterator> pcursor(NewIterator());
+    boost::scoped_ptr<CDBIterator> pcursor(NewIterator());
+
     uint64_t lookupid;
     {
         CHashWriter ss(SER_GETHASH, 0);
@@ -177,20 +178,12 @@ bool CBlockTreeDB::ReadAddrIndex(uint160 addrid, std::vector<CExtDiskTxPos> &lis
         ss << addrid;
         lookupid = UintToArith256(ss.GetHash()).GetLow64();
     }
-    CDataStream ssKeySet(SER_DISK, CLIENT_VERSION);
-    ssKeySet << make_pair('a', lookupid);
-    pcursor->Seek(ssKeySet.str());
+
+    pcursor->Seek(make_pair('a', lookupid));
 
     while (pcursor->Valid()) {
         std::pair<std::pair<char, uint64_t>, CExtDiskTxPos> key;
-        leveldb::Slice slKey = pcursor->key();
-        try {
-            CDataStream ssKey(slKey.data(), slKey.data() + slKey.size(), SER_DISK, CLIENT_VERSION);
-            ssKey >> key;
-        } catch(std::exception &e) {
-            break;
-        }
-        if (key.first.first == 'a' && key.first.second == lookupid) {
+        if (pcursor->GetKey(key) && key.first.first == 'a' && key.first.second == lookupid) {
             list.push_back(key.second);
         } else {
             break;
@@ -202,7 +195,7 @@ bool CBlockTreeDB::ReadAddrIndex(uint160 addrid, std::vector<CExtDiskTxPos> &lis
 
 bool CBlockTreeDB::AddAddrIndex(const std::vector<std::pair<uint160, CExtDiskTxPos> > &list) {
     unsigned char foo[0];
-    CLevelDBBatch batch;
+    CDBBatch batch(&GetObfuscateKey());
     for (std::vector<std::pair<uint160, CExtDiskTxPos> >::const_iterator it=list.begin(); it!=list.end(); it++) {
         CHashWriter ss(SER_GETHASH, 0);
         ss << salt;

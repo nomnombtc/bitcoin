@@ -1627,6 +1627,7 @@ bool AcceptToMemoryPool(CTxMemPool& pool, CValidationState &state, const CTransa
             pcoinsTip->Uncache(hashTx);
     }
     return res;
+}
 
 bool ReadTransaction(CTransaction& tx, const CDiskTxPos &pos, uint256 &hashBlock) {
     CAutoFile file(OpenBlockFile(pos, true), SER_DISK, CLIENT_VERSION);
