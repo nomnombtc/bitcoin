@@ -1,5 +1,17 @@
 [Website](http://www.bitcoinunlimited.info)  | [Download](http://www.bitcoinunlimited.info/download) | [Setup](doc/README.md)  |  [Xthin](doc/bu-xthin.md)  |  [Xpedited](doc/bu-xpedited-forwarding.md)  |   [Miner](doc/miner.md)
 
+Bitcoin Unlimited + addrindex
+========================
+
+This fork is Bitcoin Unlimited with an additional feature which allows querying arbitrary addresses.
+
+To use add the following to your `bitcoin.conf`:
+
+    txindex=1
+    addrindex=1
+
+First run will require a full reindex of the blockchain. After that, the `searchrawtransactions` will be available.
+
 What is Bitcoin?
 =====================================
 
