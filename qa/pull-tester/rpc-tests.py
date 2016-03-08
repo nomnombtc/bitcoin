@@ -103,6 +103,7 @@ testScripts = [ RpcTest(t) for t in [
     'decodescript',
     Disabled('p2p-fullblocktest', "TODO"),
     'blockchain',
+    'addressindex.py',
     'disablewallet',
     Disabled('sendheaders', "BU requests INVs not headers -- in the future we may add support for headers, at least by treating them like INVs)"),
     'keypool',
