@@ -9,6 +9,7 @@ Before every minor and major release:
 
 * Update [bips.md](bips.md) to account for changes since the last release.
 * Update version in sources (see below)
+* Update man pages (see below)
 * Write release notes (see below)
 
 Before every major release:
@@ -42,6 +43,19 @@ Update the following:
 - `doc/README.md` and `doc/README_windows.txt`
 - `doc/Doxyfile`: `PROJECT_NUMBER` contains the full version
 - `contrib/gitian-descriptors/*.yml`: usually one'd want to do this on master after branching off the release - but be sure to at least do it before a new major release
+
+Update man pages by running `make update-man`:
+
+Please make sure that you have `help2man` installed in `$PATH`, the software can be found at:
+https://www.gnu.org/software/help2man/
+    
+NOTE: because `help2man` runs the output binaries with the `--help` option,
+your user needs to have access to an X-Server to generate the `bitcoin-qt` man page.
+  
+If you are running in a headless environment you can use `Xvfb` instead:
+    
+    Xvfb :99
+    DISPLAY=:99 make update-man
 
 Write release notes. git shortlog helps a lot, for example:
 
