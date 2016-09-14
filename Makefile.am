@@ -152,6 +152,9 @@ $(BITCOIND_BIN): FORCE
 $(BITCOIN_CLI_BIN): FORCE
 	$(MAKE) -C src $(@F)
 
+update-man:
+	$(MAKE) -C src $(@F)
+
 if USE_LCOV
 
 baseline.info:

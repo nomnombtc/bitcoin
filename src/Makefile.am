@@ -426,7 +426,7 @@ CTAES_DIST += crypto/ctaes/test.c
 
 CLEANFILES = $(EXTRA_LIBRARIES)
 
-CLEANFILES += *.gcda *.gcno
+CLEANFILES += *.gcda *.gcno *.h2m
 CLEANFILES += compat/*.gcda compat/*.gcno
 CLEANFILES += consensus/*.gcda consensus/*.gcno
 CLEANFILES += crypto/*.gcda crypto/*.gcno
@@ -442,6 +442,14 @@ CLEANFILES += zmq/*.gcda zmq/*.gcno
 DISTCLEANFILES = obj/build.h
 
 EXTRA_DIST = $(CTAES_DIST)
+
+MANPROGRAMS := $(filter-out bench/bench_bitcoin test/test_bitcoin qt/test/test_bitcoin-qt,$(bin_PROGRAMS))
+update-man: $(MANPROGRAMS)
+	$(AM_V_at)echo "[COPYRIGHT]" > footer.h2m
+	$(AM_V_at)$(builddir)/bitcoind --version | sed -n '1!p' >> footer.h2m
+	$(AM_V_at)for prog in $^; do help2man --no-info --version-string=$(PACKAGE_VERSION) \
+	  --include=footer.h2m -o $(top_builddir)/doc/man/`basename $$prog`.1 $(builddir)/$$prog$(EXEEXT); \
+	  sed -i "s/\\\-`git rev-parse HEAD | cut -c1-7`//g" $(top_builddir)/doc/man/`basename $$prog`.1; done
 
 clean-local:
 	-$(MAKE) -C secp256k1 clean
