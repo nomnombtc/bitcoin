@@ -60,14 +60,15 @@ using namespace std;
  * Global state
  */
 
-CCriticalSection cs_main;
+// BU variables moved to globals.cpp
+// BU moved CCriticalSection cs_main;
 
-BlockMap mapBlockIndex;
-CChain chainActive;
+// BU moved BlockMap mapBlockIndex;
+// BU movedCChain chainActive;
 CBlockIndex *pindexBestHeader = NULL;
 int64_t nTimeBestReceived = 0;
-CWaitableCriticalSection csBestBlock;
-CConditionVariable cvBlockChange;
+// BU moved CWaitableCriticalSection csBestBlock;
+// BU moved CConditionVariable cvBlockChange;
 int nScriptCheckThreads = 0;
 bool fImporting = false;
 bool fReindex = false;
@@ -88,14 +89,19 @@ bool fEnableReplacement = DEFAULT_ENABLE_REPLACEMENT;
 /** Fees smaller than this (in satoshi) are considered zero fee (for relaying, mining and transaction creation) */
 CFeeRate minRelayTxFee = CFeeRate(DEFAULT_MIN_RELAY_TX_FEE);
 
-CTxMemPool mempool(::minRelayTxFee);
+// BU: Move global objects to a single file
+extern CTxMemPool mempool;
 
-// BU: change locking of orphan map from using cs_main to cs_orphancache.  There is too much dependance on cs_main locks which
-//     are generally too broad in scope.
-CCriticalSection cs_orphancache;
-map<uint256, COrphanTx> mapOrphanTransactions GUARDED_BY(cs_orphancache);
-map<uint256, set<uint256> > mapOrphanTransactionsByPrev GUARDED_BY(cs_orphancache);
+// BU: change locking of orphan map from using cs_main to cs_orphancache.  
+// There is too much dependance on cs_main locks which are generally too 
+// broad in scope.
+// Move globals to a single file
+extern CCriticalSection cs_orphancache;
+extern map<uint256, COrphanTx> mapOrphanTransactions GUARDED_BY(cs_orphancache);
+extern map<uint256, set<uint256> > mapOrphanTransactionsByPrev GUARDED_BY(cs_orphancache);
+
 void EraseOrphansFor(NodeId peer) EXCLUSIVE_LOCKS_REQUIRED(cs_orphancache);
+int64_t nLastOrphanCheck = GetTime(); // Used in EraseOrphansByTime()
 
 // BU: start block download at low numbers in case our peers are slow when we start  
 /** Number of blocks that can be requested at any given time from a single peer. */
@@ -407,6 +413,7 @@ bool MarkBlockAsReceived(const uint256& hash) {
             MAX_BLOCKS_IN_TRANSIT_PER_PEER = 1;
             BLOCK_DOWNLOAD_WINDOW = 8;
         }
+
         LogPrint("thin", "Received block %s in %.2f seconds\n", hash.ToString(), nResponseTime);
         LogPrint("thin", "Average block response time is %.2f seconds\n", avgResponseTime);
         LogPrintf("BLOCK_DOWNLOAD_WINDOW is %d MAX_BLOCKS_IN_TRANSIT_PER_PEER is %d\n", BLOCK_DOWNLOAD_WINDOW, MAX_BLOCKS_IN_TRANSIT_PER_PEER);
@@ -443,11 +450,13 @@ bool MarkBlockAsReceived(const uint256& hash) {
     return false;
 }
 
+#if 0  // BU: not currently used
 // Returns time at which to timeout block request (nTime in microseconds)
 int64_t GetBlockTimeout(int64_t nTime, int nValidatedQueuedBefore, const Consensus::Params &consensusParams)
 {
     return nTime + 500000 * consensusParams.nPowTargetSpacing * (4 + nValidatedQueuedBefore);
 }
+#endif
 
   // BU MarkBlockAsInFlight moved out of anonymous namespace
 
@@ -690,7 +699,13 @@ CBlockTreeDB *pblocktree = NULL;
 //
 // mapOrphanTransactions
 //
-
+static bool AlreadyHaveOrphan(uint256 hash)
+{
+    LOCK(cs_orphancache);
+    if (mapOrphanTransactions.count(hash))
+        return true;
+    return false;
+}
 bool AddOrphanTx(const CTransaction& tx, NodeId peer) EXCLUSIVE_LOCKS_REQUIRED(cs_orphancache)
 {
 
@@ -713,12 +728,12 @@ bool AddOrphanTx(const CTransaction& tx, NodeId peer) EXCLUSIVE_LOCKS_REQUIRED(c
     //      orphan cache is limited to only 5000 entries by default. Only 500MB of memory could be consumed
     //      if there were some kind of orphan memory exhaustion attack.
     //      Dropping any tx means they need to be included in the thin block when it it mined, which is inefficient.
-    //unsigned int sz = tx.GetSerializeSize(SER_NETWORK, CTransaction::CURRENT_VERSION);
-    //if (sz > 5000)
-    //{
-    //    LogPrint("mempool", "ignoring large orphan tx (size: %u, hash: %s)\n", sz, hash.ToString());
-    //    return false;
-    //}
+    unsigned int sz = tx.GetSerializeSize(SER_NETWORK, CTransaction::CURRENT_VERSION);
+    if (sz > MAX_STANDARD_TX_SIZE)
+    {
+        LogPrint("mempool", "ignoring large orphan tx (size: %u, hash: %s)\n", sz, hash.ToString());
+        return false;
+    }
     // BU - Xtreme Thinblocks - end section
 
     mapOrphanTransactions[hash].tx = tx;
@@ -777,10 +792,8 @@ void EraseOrphansByTime() EXCLUSIVE_LOCKS_REQUIRED(cs_orphancache)
 
     // Because we have to iterate through the entire orphan cache which can be large we don't want to check this
     // every time a tx enters the mempool but just once every 5 minutes is good enough.
-    static int64_t nLastOrphanCheck = GetTime();
     if (GetTime() <  nLastOrphanCheck + 5*60)
         return;
-
     int64_t nOrphanTxCutoffTime = GetTime() - GetArg("-mempoolexpiry", DEFAULT_MEMPOOL_EXPIRY) * 60 * 60;
     map<uint256, COrphanTx>::iterator iter = mapOrphanTransactions.begin();
     while (iter != mapOrphanTransactions.end())
@@ -1373,7 +1386,7 @@ bool AcceptToMemoryPoolWorker(CTxMemPool& pool, CValidationState &state, const C
         LogPrint("mempool",
                  "MempoolBytes:%d  LimitFreeRelay:%.5g  FeeCutOff:%.4g  FeesSatoshiPerByte:%.4g  TxBytes:%d  TxFees:%d\n",
                   poolBytes, nFreeLimit, ((double)::minRelayTxFee.GetFee(nSize)) / nSize, ((double)nFees) / nSize, nSize, nFees);
-        if (fLimitFree && nFees < ::minRelayTxFee.GetFee(nSize) && !fSpendsCoinbase && dPriority < 150000000)
+        if (fLimitFree && nFees < ::minRelayTxFee.GetFee(nSize) && !fSpendsCoinbase)
         {
             static double dFreeCount;
 
@@ -3685,11 +3698,6 @@ bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationState& sta
         return state.Invalid(error("%s : rejected nVersion=3 block", __func__),
                              REJECT_OBSOLETE, "bad-version");
 
-    // Reject block.nVersion=3 blocks when 95% (75% on testnet) of the network has upgraded:
-    if (block.nVersion < 4 && IsSuperMajority(4, pindexPrev, consensusParams.nMajorityRejectBlockOutdated, consensusParams))
-        return state.Invalid(error("%s : rejected nVersion=3 block", __func__),
-                             REJECT_OBSOLETE, "bad-version");
-
     return true;
 }
 
@@ -3755,10 +3763,10 @@ static bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state
         CBlockIndex* pindexPrev = NULL;
         BlockMap::iterator mi = mapBlockIndex.find(block.hashPrevBlock);
         if (mi == mapBlockIndex.end())
-            return state.DoS(10, error("%s: prev block not found", __func__), 0, "bad-prevblk");
+	  return state.DoS(10, error("%s: previous block %s not found while accepting %s", __func__,block.hashPrevBlock.ToString(),hash.ToString()), 0, "bad-prevblk");
         pindexPrev = (*mi).second;
         if (pindexPrev->nStatus & BLOCK_FAILED_MASK)
-            return state.DoS(100, error("%s: prev block invalid", __func__), REJECT_INVALID, "bad-prevblk");
+            return state.DoS(100, error("%s: previous block invalid", __func__), REJECT_INVALID, "bad-prevblk");
 
         assert(pindexPrev);
         if (fCheckpointsEnabled && !CheckIndexAgainstCheckpoint(pindexPrev, state, chainparams, hash))
@@ -3887,7 +3895,10 @@ bool ProcessNewBlock(CValidationState& state, const CChainParams& chainparams, c
         }
         CheckBlockIndex(chainparams.GetConsensus());
         if (!ret)
+	  {
+            // BU TODO: if block comes out of order (before its parent) this will happen.  We should cache the block until the parents arrive.
             return error("%s: AcceptBlock FAILED", __func__);
+	  }
     }
 
     if (!ActivateBestChain(state, chainparams, pblock))
@@ -4297,15 +4308,18 @@ bool CVerifyDB::VerifyDB(const CChainParams& chainparams, CCoinsView *coinsview,
 
 void UnloadBlockIndex()
 {
-    //LOCK(cs_main);
-    LOCK2(cs_main, cs_orphancache);
+    {
+    LOCK(cs_orphancache);
+    mapOrphanTransactions.clear();
+    mapOrphanTransactionsByPrev.clear();
+    }
+
+    LOCK(cs_main);
     setBlockIndexCandidates.clear();
     chainActive.SetTip(NULL);
     pindexBestInvalid = NULL;
     pindexBestHeader = NULL;
     mempool.clear();
-    mapOrphanTransactions.clear();
-    mapOrphanTransactionsByPrev.clear();
     nSyncStarted = 0;
     mapBlocksUnlinked.clear();
     vinfoBlockFile.clear();
@@ -4766,10 +4780,9 @@ static bool AlreadyHave(const CInv& inv) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
                 hashRecentRejectsChainTip = chainActive.Tip()->GetBlockHash();
                 recentRejects->reset();
             }
-            LOCK(cs_orphancache);
             return recentRejects->contains(inv.hash) ||
                    mempool.exists(inv.hash) ||
-                   mapOrphanTransactions.count(inv.hash) ||
+                   AlreadyHaveOrphan(inv.hash) ||
                    pcoinsTip->HaveCoins(inv.hash);
         }
     case MSG_BLOCK:
@@ -5428,6 +5441,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
         // Check for recently rejected (and do other quick existence checks)
         if (!AlreadyHave(inv) && AcceptToMemoryPool(mempool, state, tx, true, &fMissingInputs))
         {
+
             mempool.check(pcoinsTip);
             RelayTransaction(tx);
             vWorkQueue.push_back(inv.hash);
@@ -5488,7 +5502,6 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
                     mempool.check(pcoinsTip);
                 }
             }
-            
             BOOST_FOREACH(uint256 hash, vEraseQueue)
                 EraseOrphanTx(hash);
 
@@ -6847,19 +6860,23 @@ ThresholdState VersionBitsTipState(const Consensus::Params& params, Consensus::D
     return VersionBitsState(chainActive.Tip(), params, pos, versionbitscache);
 }
 
-class CMainCleanup
-{
-public:
-    CMainCleanup() {}
-    ~CMainCleanup() {
+void MainCleanup()
+  {
+    if (1)
+      {
+        LOCK(cs_main);  // BU apply the appropriate lock so no contention during destruction
         // block headers
         BlockMap::iterator it1 = mapBlockIndex.begin();
         for (; it1 != mapBlockIndex.end(); it1++)
             delete (*it1).second;
         mapBlockIndex.clear();
+      }
 
+    if (1)
+      {
+        LOCK(cs_orphancache);  // BU apply the appropriate lock so no contention during destruction
         // orphan transactions
         mapOrphanTransactions.clear();
-        mapOrphanTransactionsByPrev.clear();
-    }
-} instance_of_cmaincleanup;
+        mapOrphanTransactionsByPrev.clear();  
+      }
+  }

@@ -80,8 +80,6 @@ namespace {
 bool fDiscover = true;
 bool fListen = true;
 uint64_t nLocalServices = NODE_NETWORK;
-CCriticalSection cs_mapLocalHost;
-map<CNetAddr, LocalServiceInfo> mapLocalHost;
 static bool vfReachable[NET_MAX] = {};
 static bool vfLimited[NET_MAX] = {};
 static CNode* pnodeLocalHost = NULL;
@@ -92,37 +90,38 @@ int nMaxConnections = DEFAULT_MAX_PEER_CONNECTIONS;
 bool fAddressesInitialized = false;
 std::string strSubVersion;
 
-extern vector<CNode*> vNodes;
-extern CCriticalSection cs_vNodes;
-map<CInv, CDataStream> mapRelay;
-deque<pair<int64_t, CInv> > vRelayExpiration;
-CCriticalSection cs_mapRelay;
-limitedmap<CInv, int64_t> mapAlreadyAskedFor(MAX_INV_SZ);
+// BU moved to global.cpp 
+// extern vector<CNode*> vNodes;
+// extern CCriticalSection cs_vNodes;
+// map<CInv, CDataStream> mapRelay;
+// deque<pair<int64_t, CInv> > vRelayExpiration;
+// CCriticalSection cs_mapRelay;
+// limitedmap<CInv, int64_t> mapAlreadyAskedFor(MAX_INV_SZ);
 
-static deque<string> vOneShots;
-CCriticalSection cs_vOneShots;
+extern deque<string> vOneShots;
+extern CCriticalSection cs_vOneShots;
 
-set<CNetAddr> setservAddNodeAddresses;
-CCriticalSection cs_setservAddNodeAddresses;
+extern set<CNetAddr> setservAddNodeAddresses;
+extern CCriticalSection cs_setservAddNodeAddresses;
 
-vector<std::string> vAddedNodes;
-CCriticalSection cs_vAddedNodes;
+extern vector<std::string> vAddedNodes;
+extern CCriticalSection cs_vAddedNodes;
 
 // BITCOINUNLIMITED START
-vector<std::string> vUseDNSSeeds;
-CCriticalSection cs_vUseDNSSeeds;
+extern vector<std::string> vUseDNSSeeds;
+extern CCriticalSection cs_vUseDNSSeeds;
 // BITCOINUNLIMITED END
 
 NodeId nLastNodeId = 0;
-CCriticalSection cs_nLastNodeId;
+extern CCriticalSection cs_nLastNodeId;
 
 extern CSemaphore *semOutbound;
-static CSemaphore *semOutboundAddNode; // BU: separate semaphore for -addnodes
+extern CSemaphore *semOutboundAddNode; // BU: separate semaphore for -addnodes
 boost::condition_variable messageHandlerCondition;
 
 // BU  Connection Slot mitigation - used to determine how many connection attempts over time
-std::map<CNetAddr, ConnectionHistory> mapInboundConnectionTracker;
-CCriticalSection cs_mapInboundConnectionTracker;
+extern std::map<CNetAddr, ConnectionHistory> mapInboundConnectionTracker;
+extern CCriticalSection cs_mapInboundConnectionTracker;
 
 // Signals for message handling
 extern CNodeSignals g_signals;
@@ -358,7 +357,9 @@ uint64_t CNode::nMaxOutboundCycleStartTime = 0;
 
 CNode* FindNode(const CNetAddr& ip)
 {
-    LOCK(cs_vNodes);
+    //BU: Enforce cs_vNodes lock held external to FindNode function calls to prevent use-after-free errors
+    AssertLockHeld(cs_vNodes);
+    //LOCK(cs_vNodes);
     BOOST_FOREACH (CNode* pnode, vNodes)
         if ((CNetAddr)pnode->addr == ip)
             return (pnode);
@@ -367,7 +368,9 @@ CNode* FindNode(const CNetAddr& ip)
 
 CNode* FindNode(const CSubNet& subNet)
 {
-    LOCK(cs_vNodes);
+    //BU: Enforce cs_vNodes lock held external to FindNode function calls to prevent use-after-free errors
+    AssertLockHeld(cs_vNodes);
+    //LOCK(cs_vNodes);
     BOOST_FOREACH(CNode* pnode, vNodes)
     if (subNet.Match((CNetAddr)pnode->addr))
         return (pnode);
@@ -376,7 +379,9 @@ CNode* FindNode(const CSubNet& subNet)
 
 CNode* FindNode(const std::string& addrName)
 {
-    LOCK(cs_vNodes);
+    //BU: Enforce cs_vNodes lock held external to FindNode function calls to prevent use-after-free errors
+    AssertLockHeld(cs_vNodes);
+    //LOCK(cs_vNodes);
     BOOST_FOREACH (CNode* pnode, vNodes)
         if (pnode->addrName == addrName)
             return (pnode);
@@ -385,12 +390,29 @@ CNode* FindNode(const std::string& addrName)
 
 CNode* FindNode(const CService& addr)
 {
-    LOCK(cs_vNodes);
+    //BU: Enforce cs_vNodes lock held external to FindNode function calls to prevent use-after-free errors
+    AssertLockHeld(cs_vNodes);
+    //LOCK(cs_vNodes);
     BOOST_FOREACH (CNode* pnode, vNodes)
         if ((CService)pnode->addr == addr)
             return (pnode);
     return NULL;
 }
+
+int DisconnectSubNetNodes(const CSubNet& subNet)
+{
+    int nDisconnected = 0;
+    LOCK(cs_vNodes);
+    BOOST_FOREACH(CNode* pnode, vNodes)
+        if (subNet.Match((CNetAddr)pnode->addr)) {
+            pnode->fDisconnect = true;
+            nDisconnected++;
+        }
+
+    //return the number of nodes in this subnet marked for disconnection
+    return nDisconnected;
+}
+
 
 CNode* ConnectNode(CAddress addrConnect, const char* pszDest)
 {
@@ -398,10 +420,13 @@ CNode* ConnectNode(CAddress addrConnect, const char* pszDest)
         if (IsLocal(addrConnect))
             return NULL;
 
+        //BU: Add lock on cs_vNodes as FindNode now requries it to prevent potential use-after-free errors
+        LOCK(cs_vNodes);
         // Look for an existing connection
         CNode* pnode = FindNode((CService)addrConnect);
         if (pnode)
         {
+            //NOTE: Because ConnectNode adds a reference, we don't have to protect the returned CNode* like for FindNode
             pnode->AddRef();
             return pnode;
         }
@@ -890,10 +915,12 @@ static bool ReverseCompareNodeMinPingTime(const CNodeRef &a, const CNodeRef &b)
 }
 #endif
 
+#if 0 // BU: Not currenly used
 static bool ReverseCompareNodeTimeConnected(const CNodeRef &a, const CNodeRef &b)
 {
     return a->nTimeConnected > b->nTimeConnected;
 }
+#endif
 
 // BU: connection slot exhaustion mitigation
 static bool CompareNodeActivityBytes(const CNodeRef &a, const CNodeRef &b)
@@ -1078,40 +1105,12 @@ static void AcceptConnection(const ListenSocket& hListenSocket) {
     socklen_t len = sizeof(sockaddr);
     SOCKET hSocket = accept(hListenSocket.socket, (struct sockaddr*)&sockaddr, &len);
     CAddress addr;
-    int nInbound = 0;
-    //NOTE: BU added separate tracking of outbound nodes added via the "-addnode" option.  This means that you actually
-    //      may end up with up to 2 * nMaxOutConnections outbound connections due to the separate semaphores.
-    //
-    //1. Limit the number of possible "-addnode" outbounds to not exceed nMaxOutConnections
-    //   Otherwise we waste inbound connection slots on outbound addnodes that are blocked waiting on the semaphore.
-    //2. BUT, if less than nMaxOutConnections in vAddedNodes, open up any of the unreserved
-    //   "-addnode" connection slots to the inbound pool to prevent holding presently unneeded outbound connection slots.
-    int nMaxAddNodeOutbound = nMaxOutConnections;
-    {
-        LOCK(cs_vAddedNodes);
-        nMaxAddNodeOutbound = std::min((int)vAddedNodes.size(), nMaxOutConnections);
-    }
-    int nMaxInbound = nMaxConnections - nMaxOutConnections - nMaxAddNodeOutbound;
-    //REVISIT: a. This doesn't take into account RPC "addnode <node> onetry" outbound connections as those aren't tracked
-    //         b. This also doesn't take into account whether or not the tracked vAddedNodes are valid or connected
-    //         c. There is also an edge case where if less than nMaxOutConnections entries exist in vAddedNodes
-    //            and there are already "maxconnections", between inbound and outbound nodes, the user can still use
-    //            RPC "addnode <node> add" to successfully start additional outbound connections
-    //         Points a. and c. can allow users to exceed "maxconnections"
-    //         Point b. can cause us to waste slots holding them for invalid addnode entries that will never connect.
 
     if (hSocket != INVALID_SOCKET)
         if (!addr.SetSockAddr((const struct sockaddr*)&sockaddr))
             LogPrintf("Warning: Unknown socket family\n");
 
     bool whitelisted = hListenSocket.whitelisted || CNode::IsWhitelistedRange(addr);
-    {
-        LOCK(cs_vNodes);
-        BOOST_FOREACH(CNode* pnode, vNodes)
-            if (pnode->fInbound)
-                nInbound++;
-    }
-
     if (hSocket == INVALID_SOCKET)
     {
         int nErr = WSAGetLastError();
@@ -1142,6 +1141,37 @@ static void AcceptConnection(const ListenSocket& hListenSocket) {
         CloseSocket(hSocket);
         return;
     }
+
+    //BU - Moved locks below checks above as they may return without us ever having to take these locks (esp. IsBanned check)
+    //NOTE: BU added separate tracking of outbound nodes added via the "-addnode" option.  This means that you actually
+    //      may end up with up to 2 * nMaxOutConnections outbound connections due to the separate semaphores.
+    //
+    //1. Limit the number of possible "-addnode" outbounds to not exceed nMaxOutConnections
+    //   Otherwise we waste inbound connection slots on outbound addnodes that are blocked waiting on the semaphore.
+    //2. BUT, if less than nMaxOutConnections in vAddedNodes, open up any of the unreserved
+    //   "-addnode" connection slots to the inbound pool to prevent holding presently unneeded outbound connection slots.
+    int nMaxAddNodeOutbound = nMaxOutConnections;
+    {
+        LOCK(cs_vAddedNodes);
+        nMaxAddNodeOutbound = std::min((int)vAddedNodes.size(), nMaxOutConnections);
+    }
+    int nMaxInbound = nMaxConnections - nMaxOutConnections - nMaxAddNodeOutbound;
+    //REVISIT: a. This doesn't take into account RPC "addnode <node> onetry" outbound connections as those aren't tracked
+    //         b. This also doesn't take into account whether or not the tracked vAddedNodes are valid or connected
+    //         c. There is also an edge case where if less than nMaxOutConnections entries exist in vAddedNodes
+    //            and there are already "maxconnections", between inbound and outbound nodes, the user can still use
+    //            RPC "addnode <node> add" to successfully start additional outbound connections
+    //         Points a. and c. can allow users to exceed "maxconnections"
+    //         Point b. can cause us to waste slots holding them for invalid addnode entries that will never connect.
+
+    int nInbound = 0;
+    {
+        LOCK(cs_vNodes);
+        BOOST_FOREACH(CNode* pnode, vNodes)
+            if (pnode->fInbound)
+                nInbound++;
+    }
+    //BU - end section
 
     if (nInbound >= nMaxInbound)
     {
@@ -1252,6 +1282,7 @@ void ThreadSocketHandler()
                     }
                     if (fDelete) {
                         vNodesDisconnected.remove(pnode);
+                        assert(std::find(vNodes.begin(),vNodes.end(), pnode) == vNodes.end());  // make sure it has been removed
                         delete pnode;
                     }
                 }
@@ -1924,13 +1955,18 @@ bool OpenNetworkConnection(const CAddress& addrConnect, CSemaphoreGrant* grantOu
     // Initiate outbound network connection
     //
     boost::this_thread::interruption_point();
-    if (!pszDest) {
-        if (IsLocal(addrConnect) ||
-            FindNode((CNetAddr)addrConnect) || CNode::IsBanned(addrConnect) ||
-            FindNode(addrConnect.ToStringIPPort()))
+    {
+        //BU: Add lock on cs_vNodes as FindNode now requries it to prevent potential use-after-free errors
+        LOCK(cs_vNodes);
+        if (!pszDest) {
+            if (IsLocal(addrConnect) ||
+                FindNode((CNetAddr)addrConnect) || CNode::IsBanned(addrConnect) ||
+                FindNode(addrConnect.ToStringIPPort()))
+                return false;
+        }
+        else if (FindNode(std::string(pszDest)))
             return false;
-    } else if (FindNode(std::string(pszDest)))
-        return false;
+    }
 
     CNode* pnode = ConnectNode(addrConnect, pszDest);
     boost::this_thread::interruption_point();
@@ -2258,8 +2294,10 @@ bool StopNode()
     return true;
 }
 
-CNetCleanup::~CNetCleanup()
+void NetCleanup()
     {
+        LOCK(cs_vNodes);
+
         // Close sockets
         BOOST_FOREACH (CNode* pnode, vNodes)
             if (pnode->hSocket != INVALID_SOCKET)
@@ -2277,12 +2315,12 @@ CNetCleanup::~CNetCleanup()
         vNodes.clear();
         vNodesDisconnected.clear();
         vhListenSocket.clear();
-        delete semOutbound;
+        if (semOutbound) delete semOutbound;
         semOutbound = NULL;
         //BU: clean up the "-addnode" semaphore
-        delete semOutboundAddNode;
+        if (semOutboundAddNode) delete semOutboundAddNode;
         semOutboundAddNode = NULL;
-        delete pnodeLocalHost;
+        if (pnodeLocalHost) delete pnodeLocalHost;
         pnodeLocalHost = NULL;
 
 #ifdef WIN32
@@ -2355,7 +2393,7 @@ void CNode::RecordBytesSent(uint64_t bytes)
 void CNode::SetMaxOutboundTarget(uint64_t limit)
 {
     LOCK(cs_totalBytesSent);
-    uint64_t recommendedMinimum = (nMaxOutboundTimeframe / 600) * BU_MAX_BLOCK_SIZE;
+    uint64_t recommendedMinimum = (nMaxOutboundTimeframe * excessiveBlockSize) / 600;
     nMaxOutboundLimit = limit;
 
     if (limit > 0 && limit < recommendedMinimum)
@@ -2410,7 +2448,7 @@ bool CNode::OutboundTargetReached(bool historicalBlockServingLimit)
     {
         // keep a large enough buffer to at least relay each block once
         uint64_t timeLeftInCycle = GetMaxOutboundTimeLeftInCycle();
-        uint64_t buffer = timeLeftInCycle / 600 * BU_MAX_BLOCK_SIZE;
+        uint64_t buffer = (timeLeftInCycle * excessiveBlockSize) / 600;
         if (buffer >= nMaxOutboundLimit || nMaxOutboundTotalBytesSentInCycle >= nMaxOutboundLimit - buffer)
             return true;
     }

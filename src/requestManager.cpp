@@ -1,3 +1,7 @@
+// Copyright (c) 2016 The Bitcoin Unlimited developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
 #include "chain.h"
 #include "clientversion.h"
 #include "chainparams.h"
@@ -35,7 +39,7 @@ using namespace std;
 extern CCriticalSection cs_orphancache; // from main.h
 
 // Request management
-CRequestManager requester;
+extern CRequestManager requester;
 
 unsigned int MIN_TX_REQUEST_RETRY_INTERVAL = 5*1000*1000;  // When should I request an object from someone else (in microseconds)
 unsigned int MIN_BLK_REQUEST_RETRY_INTERVAL = 5*1000*1000;  // When should I request a block from someone else (in microseconds)
