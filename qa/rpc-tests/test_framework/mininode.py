@@ -212,8 +212,8 @@ class NodeConn(asyncore.dispatcher):
 
     MAGIC_BYTES = {
         "mainnet": b"\xf9\xbe\xb4\xd9",   # mainnet
-        "testnet3": b"\x0b\x11\x09\x07",  # testnet3
-        "regtest": b"\xfa\xbf\xb5\xda"    # regtest
+        "testnet5": b"\x6e\x65\x74\x00",  # testnet5
+        "regtest": b"\xfa\xbf\xb5\xda",   # regtest
     }
 
     def __init__(self, dstaddr, dstport, rpc, callback, net="regtest", services=1):
